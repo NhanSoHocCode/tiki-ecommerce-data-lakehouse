@@ -1,0 +1,13 @@
+connector.name=hive
+hive.metastore=file
+hive.metastore.catalog.dir=s3://lakehouse/_hive_raw_metastore/
+hive.storage-format=PARQUET
+hive.parquet.use-column-names=true
+hive.non-managed-table-writes-enabled=true
+
+fs.s3.enabled=true
+s3.endpoint=http://minio:9000
+s3.region=us-east-1
+s3.aws-access-key=nhansohoccode
+s3.aws-secret-key=nhuhuyen49#
+s3.path-style-access=true

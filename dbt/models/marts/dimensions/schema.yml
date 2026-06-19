@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: dim_product
+    description: "Chiều sản phẩm — SCD Type 1"
+    columns:
+      - name: product_id
+        tests: [not_null, unique]
+
+  - name: dim_seller
+    description: "Chiều nhà bán hàng"
+    columns:
+      - name: seller_id
+        tests: [not_null, unique]
+
+  - name: dim_brand
+    description: "Chiều thương hiệu"
+    columns:
+      - name: brand_id
+        tests: [not_null, unique]
+
+  - name: dim_category
+    description: "Chiều danh mục — flatten 4 cấp từ path"
+    columns:
+      - name: category_id
+        description: "Surrogate key = HASH(primary_category_path)"
+        tests: [not_null, unique]
+
+  - name: dim_delivery
+    description: "Chiều giao hàng — surrogate key từ tổ hợp thuộc tính"
+    columns:
+      - name: delivery_id
+        tests: [not_null, unique]
+
+  - name: dim_date
+    description: "Chiều thời gian - Crete to 2030-12-31"
+    columns:
+      - name: date_id
+        tests: [not_null, unique]
+      - name: full_date
+        tests: [not_null, unique]

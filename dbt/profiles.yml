@@ -1,0 +1,30 @@
+dbt_tiki: 
+  target: trino
+  outputs:
+    dev:
+      type: duckdb
+      path: tiki.duckdb
+      extensions:
+        - httpfs
+        - aws
+      settings: 
+        s3_endpoint: localhost:9000
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD') }}"
+        s3_region: "us-east-1"
+        s3_use_ssl: false
+        s3_url_style: path
+      external_root: "s3://lakehouse/marts"
+    trino:
+      type: trino
+      method: none
+      host: "{{ env_var('TRINO_HOST', 'localhost') }}"
+      port: "{{ env_var('TRINO_PORT', 8080) | as_number }}"
+      user: "{{ env_var('TRINO_USER') }}"
+      http_scheme: http
+      schema: staging
+      threads: 4
+      catalog: lakehouse
+      
+      
+# Run: uv run --env-file ../.env dbt run

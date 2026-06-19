@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: raw_tiki
+    database: hive
+    schema: raw
+    tables:
+      - name: products
+
+models:
+  - name: stg_products
+    description: "Staging view — đọc raw Parquet từ MinIO, cast kiểu, parse quantity_sold"
+    columns:
+      - name: product_id
+        description: "Natural key từ Tiki API"
+        tests:
+          - not_null
+          - unique
+      - name: price
+        tests:
+          - not_null
+      - name: seller_id
+        tests:
+          - not_null
+      - name: extracted_at
+        tests:
+          - not_null

@@ -1,0 +1,235 @@
+services:
+  # 1. MINIO - Object Storage Layer
+  minio:
+    image: minio/minio:latest
+    container_name: tiki_minio
+    ports:
+      - "9000:9000" #API
+      - "9001:9001" # Web UI
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - lakehouse-net
+    restart: "no"
+  minio-init:
+    image: minio/mc:latest
+    container_name: tiki_minio_init
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    entrypoint: [ "/bin/sh", "-c" ]
+    command:
+      - |
+        sleep 10
+        /usr/bin/mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        /usr/bin/mc mb -p myminio/raw-data || true
+        /usr/bin/mc mb -p myminio/lakehouse || true
+        exit 0
+    networks:
+      - lakehouse-net
+    restart: "no"
+
+  # 2. Postgres - Metadatadb & Superset Backend
+  postgres:
+    image: postgres:15
+    container_name: tiki_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - lakehouse-net
+    restart: "no"
+
+  trino:
+    image: trinodb/trino:latest
+    container_name: tiki_trino
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+    volumes:
+      - ./trino/etc:/etc/trino
+    networks:
+      - lakehouse-net
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+      postgres:
+        condition: service_started
+  superset:
+    image: apache/superset:latest
+    container_name: tiki_superset
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_LOAD_EXAMPLES: "no"
+      SQLALCHEMY_DATABASE_URI: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      PYTHONPATH: "/app/pythonpath:/app/superset_home/.local/lib/python3.10/site-packages"
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py
+      - ./scripts/superset_service_worker.js:/app/superset/static/service-worker.js:ro
+    networks:
+      - lakehouse-net
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+      pip install --no-deps trino tzlocal lz4 orjson zstandard psycopg2-binary &&
+      superset db upgrade &&
+      superset fab create-admin --username ${SUPERSET_ADMIN_USER} --firstname Superset --lastname Admin --email admin@lakehouse.local --password ${SUPERSET_ADMIN_PASSWORD} &&
+      superset init &&
+      gunicorn -w 2 --timeout 120 -b 0.0.0.0:8088 --limit-request-line 0 --limit-request-field_size 0 'superset.app:create_app()'
+      "
+    depends_on:
+      - trino
+      - postgres
+
+  # Config Docker 
+  postgres-airflow:
+    image: postgres:15
+    container_name: tiki_postgres_airflow
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    networks:
+      - lakehouse-net
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "${AIRFLOW_DB_USER}" ]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: "no"
+
+  airflow-init:
+    image: apache/airflow:2.10.2-python3.11
+    container_name: tiki_airflow_init
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/${AIRFLOW_DB_NAME}"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor # Không cần Redis
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Bangkok
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    volumes:
+      - ./:/opt/airflow/project
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    networks:
+      - lakehouse-net
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username $AIRFLOW_ADMIN_USER \
+          --password $AIRFLOW_ADMIN_PASSWORD \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email $EMAIL_ADDRESS_AIRFLOW
+
+    restart: "no"
+
+  airflow-webserver:
+    image: apache/airflow:2.10.2-python3.11
+    container_name: tiki_airflow_webserver
+    ports:
+      - "8081:8080" # Due to trimo port 8080
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/${AIRFLOW_DB_NAME}"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Bangkok
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ENDPOINT: "http://minio:9000"
+      TRINO_HOST: "trino"
+      TRINO_PORT: "8080"
+      TRINO_USER: ${TRINO_USER}
+    volumes:
+      - ./:/opt/airflow/project
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    networks:
+      - lakehouse-net
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    entrypoint: airflow webserver
+    restart: "no"
+  airflow-scheduler:
+    image: apache/airflow:2.10.2-python3.11
+    container_name: tiki_airflow_scheduler
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/${AIRFLOW_DB_NAME}"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Bangkok
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ENDPOINT: "http://minio:9000"
+      TRINO_HOST: "trino"
+      TRINO_PORT: "8080"
+      TRINO_USER: ${TRINO_USER}
+    volumes:
+      - ./:/opt/airflow/project
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    networks:
+      - lakehouse-net
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        python -m pip install --no-cache-dir -e /opt/airflow/project &&
+        airflow scheduler
+    restart: "no"
+
+networks:
+  lakehouse-net:
+    driver: bridge
+    name: tiki-lakehouse
+
+volumes:
+  minio_data:
+  postgres_data:
+  postgres_airflow_data:

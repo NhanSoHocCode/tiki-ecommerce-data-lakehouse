@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: fact_product_snapshot
+    description: "Fact table — mỗi dòng là 1 snapshot sản phẩm tại 1 thời điểm crawl"
+    columns:
+      - name: snapshot_id
+        description: "Surrogate key = HASH(product_id || extracted_at)"
+        tests:
+          - not_null
+          - unique
+      - name: product_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_id
+      - name: seller_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_seller')
+                field: seller_id
+      - name: brand_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_brand')
+                field: brand_id
+      - name: date_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_id

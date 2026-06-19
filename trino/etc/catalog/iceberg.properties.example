@@ -1,0 +1,21 @@
+connector.name=iceberg
+
+# Catalog mapping
+iceberg.catalog.type=jdbc
+iceberg.jdbc-catalog.driver-class=org.postgresql.Driver
+iceberg.jdbc-catalog.connection-url=jdbc:postgresql://postgres:5432/tiki_db
+iceberg.jdbc-catalog.connection-user=nhansohoccode
+iceberg.jdbc-catalog.connection-password=nhuhuyen49#
+iceberg.jdbc-catalog.catalog-name=iceberg
+iceberg.jdbc-catalog.default-warehouse-dir=s3://lakehouse/iceberg/
+
+# Iceberg formats
+iceberg.file-format=PARQUET
+
+# MinIO Connection
+fs.s3.enabled=true
+s3.endpoint=http://minio:9000
+s3.region=us-east-1
+s3.aws-access-key=nhansohoccode
+s3.aws-secret-key=nhuhuyen49#
+s3.path-style-access=true
