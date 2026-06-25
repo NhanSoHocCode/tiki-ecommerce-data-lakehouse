@@ -1,110 +1,68 @@
 # Tiki Lakehouse Analytics Project
 
-Du an xay dung pipeline du lieu end-to-end cho du lieu san pham Tiki. Pipeline crawl du lieu san pham hang ngay, luu raw data vao MinIO, expose raw Parquet bang Hive catalog, transform bang dbt qua Trino, luu bang phan tich vao Iceberg, dieu phoi bang Airflow va truc quan hoa bang Apache Superset.
+Dự án xây dựng pipeline dữ liệu end-to-end cho dữ liệu sản phẩm Tiki. Pipeline crawl dữ liệu sản phẩm hằng ngày, lưu raw data vào MinIO, expose raw Parquet bằng Hive catalog, transform bằng dbt qua Trino, lưu bảng phân tích vào Iceberg, điều phối bằng Airflow và trực quan hóa bằng Apache Superset.
 
-Muc tieu chinh:
+Mục tiêu chính:
 
-- Theo doi so luong ban uoc tinh theo ngay.
-- Theo doi doanh thu uoc tinh theo ngay.
-- Phan tich top san pham, brand, seller, category.
-- Quan sat bien dong ban hang dua tren snapshot san pham hang ngay.
-- Tao mot lakehouse local de hoc va demo Data Engineering.
+- Theo dõi số lượng bán ước tính theo ngày.
+- Theo dõi doanh thu ước tính theo ngày.
+- Phân tích top sản phẩm, brand, seller, category.
+- Quan sát biến động bán hàng dựa trên snapshot sản phẩm hằng ngày.
+- Tạo một lakehouse local để học và demo Data Engineering.
 
-## 1. Kien Truc Tong Quan
+## 1. Kiến Trúc Tổng Quan
 
-```mermaid
-flowchart LR
-    A[Tiki API] --> B[Python crawler]
-    B --> C[Raw Parquet]
-    C --> D[MinIO raw-data bucket]
+![Kiến trúc tổng quan Tiki Lakehouse](images/system_architector.png)
 
-    D --> E[Trino Hive catalog]
-    E --> F[dbt staging]
-    F --> G[dbt dimensions and facts]
+### Vai Trò Các Thành Phần
 
-    G --> H[Iceberg tables]
-    H --> I[MinIO lakehouse bucket]
-    H --> J[Postgres Iceberg JDBC metadata]
-
-    H --> K[Trino SQL]
-    K --> L[Superset dashboard]
-
-    M[Airflow DAG] --> B
-    M --> F
-    M --> G
-    M --> N[dbt tests]
-```
-
-### Vai Tro Cac Thanh Phan
-
-| Thanh phan | Vai tro trong he thong |
+| Thành phần | Vai trò trong hệ thống |
 |---|---|
-| Python crawler | Goi Tiki API, crawl san pham theo category, deduplicate va ghi Parquet |
-| MinIO | Object storage S3-compatible, luu raw files va Iceberg data files |
-| Hive catalog | Giup Trino doc folder raw Parquet nhu mot SQL table `hive.raw.products` |
-| Trino | SQL query engine cho dbt va Superset |
+| Python crawler | Gọi Tiki API, crawl sản phẩm theo category, deduplicate và ghi Parquet |
+| MinIO | Object storage S3-compatible, lưu raw files và Iceberg data files |
+| Hive catalog | Giúp Trino đọc folder raw Parquet như một SQL table `hive.raw.products` |
+| Trino | SQL query engine cho dbt và Superset |
 | Iceberg | Table format cho staging, dimensions, facts trong lakehouse |
-| Postgres | Luu metadata cho Superset va Iceberg JDBC catalog |
-| dbt | Transform raw data thanh staging, dimensions va fact |
-| Airflow | Orchestrate pipeline hang ngay va chay dbt tests |
-| Superset | BI/dashboard layer query du lieu qua Trino |
+| Postgres | Lưu metadata cho Superset và Iceberg JDBC catalog |
+| dbt | Transform raw data thành staging, dimensions và fact |
+| Airflow | Orchestrate pipeline hằng ngày và chạy dbt tests |
+| Superset | BI/dashboard layer query dữ liệu qua Trino |
 
-Tom tat ngan gon:
+Tóm tắt ngắn gọn:
 
 ```text
-Hive = cua doc raw Parquet.
-Iceberg = noi quan ly bang staging/dim/fact da transform.
-Trino = engine chay SQL tren Hive va Iceberg.
-MinIO = noi luu file vat ly.
+Hive = cửa đọc raw Parquet.
+Iceberg = nơi quản lý bảng staging/dim/fact đã transform.
+Trino = engine chạy SQL trên Hive và Iceberg.
+MinIO = nơi lưu file vật lý.
 ```
 
-## 2. Luong Du Lieu End-to-End
+## 2. Luồng Dữ Liệu End-to-End
 
-```mermaid
-sequenceDiagram
-    participant Tiki as Tiki API
-    participant Crawler as Python Crawler
-    participant MinIO as MinIO Raw Bucket
-    participant Hive as Hive Catalog
-    participant Trino as Trino
-    participant dbt as dbt
-    participant Iceberg as Iceberg Tables
-    participant Superset as Superset
+![Luồng dữ liệu end-to-end](images/end_to_end_pipeline.png)
 
-    Crawler->>Tiki: Crawl category tree and product pages
-    Tiki-->>Crawler: Product JSON
-    Crawler->>Crawler: Normalize, deduplicate, add extracted_at
-    Crawler->>MinIO: Upload products_yyyyMMdd.parquet
-    Hive->>MinIO: Register raw external table location
-    dbt->>Trino: Read hive.raw.products
-    Trino->>MinIO: Scan raw Parquet
-    dbt->>Iceberg: Build staging, dimensions, facts
-    dbt->>Trino: Run dbt tests
-    Superset->>Trino: Query lakehouse marts
-```
+Chi tiết luồng:
 
-Chi tiet luong:
-
-1. `crawler/fetch_tiki_8322.py` crawl san pham tu Tiki API.
+1. `crawler/fetch_tiki_8322.py` crawl sản phẩm từ Tiki API.
 2. Crawler ghi file:
 
 ```text
 s3://raw-data/tiki_products/products_yyyyMMdd.parquet
 ```
 
-3. Trino Hive catalog expose raw folder thanh table:
+3. Trino Hive catalog expose raw folder thành table:
 
 ```text
 hive.raw.products
 ```
 
-4. dbt staging doc raw table:
+4. dbt staging đọc raw table:
 
 ```sql
 FROM hive.raw.products
 ```
 
-5. dbt ghi staging, dimensions va facts vao Iceberg:
+5. dbt ghi staging, dimensions và facts vào Iceberg:
 
 ```text
 lakehouse.staging.stg_products
@@ -112,26 +70,26 @@ lakehouse.dimensions.*
 lakehouse.facts.fact_product_snapshot
 ```
 
-6. Superset query cac bang lakehouse qua Trino.
+6. Superset query các bảng lakehouse qua Trino.
 
 ## 3. Docker Services
 
-| Service | Container | URL/Port | Muc dich |
+| Service | Container | URL/Port | Mục đích |
 |---|---|---|---|
 | MinIO | `tiki_minio` | http://localhost:9001 | Object storage UI |
 | Trino | `tiki_trino` | http://localhost:8080 | SQL query engine |
 | Airflow | `tiki_airflow_webserver` | http://localhost:8081 | Orchestration UI |
 | Superset | `tiki_superset` | http://localhost:8088 | Dashboard UI |
-| Postgres | `tiki_postgres` | localhost:5432 | Superset DB va Iceberg metadata |
+| Postgres | `tiki_postgres` | localhost:5432 | Superset DB và Iceberg metadata |
 | Postgres Airflow | `tiki_postgres_airflow` | localhost:5433 | Airflow metadata DB |
 
-Timezone runtime duoc cau hinh la:
+Timezone runtime được cấu hình là:
 
 ```text
 Asia/Bangkok
 ```
 
-Cac container Airflow va Trino duoc set `TZ=Asia/Bangkok`. Trino JVM cung duoc set:
+Các container Airflow và Trino được set `TZ=Asia/Bangkok`. Trino JVM cũng được set:
 
 ```text
 -Duser.timezone=Asia/Bangkok
@@ -139,19 +97,21 @@ Cac container Airflow va Trino duoc set `TZ=Asia/Bangkok`. Trino JVM cung duoc s
 
 ## 4. Airflow DAG
 
-DAG chinh:
+DAG chính:
 
 ```text
 tiki_daily_pipeline
 ```
 
-Lich chay:
+![Airflow DAG pipeline](images/dag_airflow_pipeline.png)
+
+Lịch chạy:
 
 ```text
-02:00 hang ngay theo Asia/Bangkok
+02:00 hằng ngày theo Asia/Bangkok
 ```
 
-Thu tu task hien tai:
+Thứ tự task hiện tại:
 
 ```text
 crawl_tiki_products
@@ -159,15 +119,15 @@ crawl_tiki_products
     -> dbt_test_marts
 ```
 
-Y nghia:
+Ý nghĩa:
 
-| Task | Chuc nang |
+| Task | Chức năng |
 |---|---|
-| `crawl_tiki_products` | Crawl san pham Tiki va upload raw Parquet vao MinIO |
-| `dbt_run_marts` | Build staging, dimensions va facts |
-| `dbt_test_marts` | Chay dbt tests sau khi build xong |
+| `crawl_tiki_products` | Crawl sản phẩm Tiki và upload raw Parquet vào MinIO |
+| `dbt_run_marts` | Build staging, dimensions và facts |
+| `dbt_test_marts` | Chạy dbt tests sau khi build xong |
 
-`dbt_test_marts` giup pipeline fail som neu co loi chat luong du lieu nhu null key, duplicate key hoac relationship sai giua fact va dimension.
+`dbt_test_marts` giúp pipeline fail sớm nếu có lỗi chất lượng dữ liệu như null key, duplicate key hoặc relationship sai giữa fact và dimension.
 
 ## 5. Data Model
 
@@ -241,58 +201,60 @@ erDiagram
     FACT_PRODUCT_SNAPSHOT }o--|| DIM_DELIVERY : delivery_id
 ```
 
-### Grain Cua Fact
+### Grain Của Fact
 
-Bang `lakehouse.facts.fact_product_snapshot` co grain:
+Bảng `lakehouse.facts.fact_product_snapshot` có grain:
 
 ```text
-1 dong = 1 san pham tai 1 ngay/thoi diem crawl
+1 dòng = 1 sản phẩm tại 1 ngày/thời điểm crawl
 ```
 
-Khoa logic:
+Khóa logic:
 
 ```text
 snapshot_id = HASH(product_id || extracted_at)
 ```
 
-### Metric Quan Trong
+### Metric Quan Trọng
 
-`quantity_sold` la so ban luy ke tai thoi diem crawl. Khong nen dung truc tiep lam daily sales.
+`quantity_sold` là số bán lũy kế tại thời điểm crawl. Không nên dùng trực tiếp làm daily sales.
 
-`estimated_sold_increment` la so ban tang them so voi snapshot truoc cua cung san pham.
+`estimated_sold_increment` là số bán tăng thêm so với snapshot trước của cùng sản phẩm.
 
-Metric dashboard nen dung:
+Metric dashboard nên dùng:
 
 ```sql
 SUM(estimated_sold_increment)
 ```
 
-Doanh thu uoc tinh:
+Doanh thu ước tính:
 
 ```sql
 SUM(estimated_sold_increment * price)
 ```
 
-Luu y DE quan trong: neu mot san pham bi miss crawl mot ngay roi xuat hien lai ngay sau, delta co the bi don vao ngay xuat hien lai. Vi vay dashboard nen co KPI coverage rate de biet ngay do crawl du hay thieu.
+Lưu ý DE quan trọng: nếu một sản phẩm bị miss crawl một ngày rồi xuất hiện lại ngày sau, delta có thể bị dồn vào ngày xuất hiện lại. Vì vậy dashboard nên có KPI coverage rate để biết ngày đó crawl đủ hay thiếu.
 
 ## 6. Superset Dashboard
 
-File dashboard mau:
+![Superset dashboard Tiki analytics](images/dashboard_superset.jpg)
+
+File dashboard mẫu:
 
 ```text
 superset_exports/tiki_dashboards.zip
 ```
 
-Dashboard query 2 dataset chinh:
+Dashboard query 2 dataset chính:
 
-| Dataset | Nguon |
+| Dataset | Nguồn |
 |---|---|
-| `ds_daily_sales` | `lakehouse.facts.fact_product_snapshot` join voi dimensions |
-| `ds_product_detail` | `lakehouse.facts.fact_product_snapshot` join voi product/brand/seller/category |
+| `ds_daily_sales` | `lakehouse.facts.fact_product_snapshot` join với dimensions |
+| `ds_product_detail` | `lakehouse.facts.fact_product_snapshot` join với product/brand/seller/category |
 
-Chart mau:
+Chart mẫu:
 
-| Chart | Metric chinh |
+| Chart | Metric chính |
 |---|---|
 | Revenue and sales volume trend by day | `SUM(estimated_sold_increment)`, `SUM(revenue_estimate)` |
 | Estimated revenue today | `SUM(estimated_sold_increment * price)` |
@@ -303,7 +265,7 @@ Chart mau:
 | Tiki Verified % | revenue share by verified flag |
 | Active product for sale | count products with positive increment |
 
-Khuyen nghi them KPI data quality:
+Khuyến nghị thêm KPI data quality:
 
 ```sql
 SELECT
@@ -314,23 +276,23 @@ GROUP BY 1
 ORDER BY 1;
 ```
 
-Neu co product universe:
+Nếu có product universe:
 
 ```sql
 coverage_rate = observed_products / total_products_in_universe
 ```
 
-## 7. Ket Qua Thuc Thi Mau
+## 7. Kết Quả Thực Thi Mẫu
 
-Artifact dbt gan nhat trong repo cho thay lan `dbt run --target trino` da thanh cong:
+Artifact dbt gần nhất trong repo cho thấy lần `dbt run --target trino` đã thành công:
 
 ```text
 PASS=8 WARN=0 ERROR=0 SKIP=0 TOTAL=8
 ```
 
-So dong ghi nhan trong lan chay mau:
+Số dòng ghi nhận trong lần chạy mẫu:
 
-| Model | Ket qua |
+| Model | Kết quả |
 |---|---:|
 | `stg_products` | 161,617 rows |
 | `dim_product` | 161,617 rows |
@@ -341,32 +303,32 @@ So dong ghi nhan trong lan chay mau:
 | `dim_date` | 4,018 rows |
 | `fact_product_snapshot` | 161,617 rows |
 
-Thoi gian dbt run mau:
+Thời gian dbt run mẫu:
 
 ```text
-Khoang 12.46 giay
+Khoảng 12.46 giây
 ```
 
-Ket qua nay la artifact local tai thoi diem chay gan nhat, khong phai dam bao moi lan crawl deu co dung so dong tren. So dong phu thuoc vao Tiki API, category tree, timeout va coverage cua crawler.
+Kết quả này là artifact local tại thời điểm chạy gần nhất, không phải đảm bảo mỗi lần crawl đều có đúng số dòng trên. Số dòng phụ thuộc vào Tiki API, category tree, timeout và coverage của crawler.
 
-## 8. Huong Dan Clone Va Chay Tu Dau
+## 8. Hướng Dẫn Clone Và Chạy Từ Đầu
 
-### Buoc 1: Clone repo
+### Bước 1: Clone repo
 
 ```powershell
 git clone <repo-url>
 cd tiki_project
 ```
 
-### Buoc 2: Tao file `.env`
+### Bước 2: Tạo file `.env`
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Mo `.env` va thay cac gia tri `change_me`.
+Mở `.env` và thay các giá trị `change_me`.
 
-Bien quan trong:
+Biến quan trọng:
 
 ```text
 TZ=Asia/Bangkok
@@ -380,78 +342,78 @@ AIRFLOW_SECRET_KEY
 TRINO_USER
 ```
 
-### Buoc 3: Chay Docker Compose
+### Bước 3: Chạy Docker Compose
 
 ```powershell
 docker compose up -d
 ```
 
-Kiem tra container:
+Kiểm tra container:
 
 ```powershell
 docker ps
 ```
 
-Lan dau Airflow va Superset co the mat vai phut de cai package va migrate metadata DB.
+Lần đầu Airflow và Superset có thể mất vài phút để cài package và migrate metadata DB.
 
-### Buoc 4: Bootstrap Lakehouse Metadata
+### Bước 4: Bootstrap Lakehouse Metadata
 
-Chay mot lan sau khi stack da len:
+Chạy một lần sau khi stack đã lên:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/bootstrap_lakehouse.ps1
 ```
 
-Script nay se:
+Script này sẽ:
 
-- Tao metadata table cho Iceberg JDBC catalog trong Postgres.
+- Tạo metadata table cho Iceberg JDBC catalog trong Postgres.
 - Register raw table `hive.raw.products`.
-- Tao Iceberg schemas:
+- Tạo Iceberg schemas:
   - `lakehouse.staging`
   - `lakehouse.dimensions`
   - `lakehouse.facts`
 
-### Buoc 5: Trigger Airflow DAG
+### Bước 5: Trigger Airflow DAG
 
-Mo Airflow:
+Mở Airflow:
 
 ```text
 http://localhost:8081
 ```
 
-Chon DAG:
+Chọn DAG:
 
 ```text
 tiki_daily_pipeline
 ```
 
-Trigger thu cong lan dau. Pipeline se chay:
+Trigger thủ công lần đầu. Pipeline sẽ chạy:
 
 ```text
 crawl_tiki_products -> dbt_run_marts -> dbt_test_marts
 ```
 
-### Buoc 6: Mo Superset
+### Bước 6: Mở Superset
 
-Mo Superset:
+Mở Superset:
 
 ```text
 http://localhost:8088
 ```
 
-Import dashboard mau:
+Import dashboard mẫu:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/import_superset_dashboard.ps1
 ```
 
-Dashboard duoc import:
+Dashboard được import:
 
 ```text
-Dashboard Tong quan Doanh thu & San pham Tiki
+Dashboard Tổng quan Doanh thu & Sản phẩm Tiki
 ```
 
-## 9. Chay Thu Cong Khong Qua Airflow
+## 9. Chạy Thủ Công Không Qua Airflow
 
 ### Crawl raw data
 
@@ -459,30 +421,30 @@ Dashboard Tong quan Doanh thu & San pham Tiki
 uv run python crawler/fetch_tiki_8322.py
 ```
 
-### Chay dbt run
+### Chạy dbt run
 
 ```powershell
 cd dbt
 uv run --env-file ../.env dbt run --target trino
 ```
 
-### Chay dbt test
+### Chạy dbt test
 
 ```powershell
 cd dbt
 uv run --env-file ../.env dbt test --target trino
 ```
 
-### Kiem tra dbt connection
+### Kiểm tra dbt connection
 
 ```powershell
 cd dbt
 uv run --env-file ../.env dbt debug --target trino
 ```
 
-## 10. Truy Van Mau
+## 10. Truy Vấn Mẫu
 
-### Doanh thu va so ban theo ngay
+### Doanh thu và số bán theo ngày
 
 ```sql
 SELECT
@@ -496,7 +458,7 @@ GROUP BY d.full_date
 ORDER BY d.full_date;
 ```
 
-### Top san pham ban tang them nhieu nhat
+### Top sản phẩm bán tăng thêm nhiều nhất
 
 ```sql
 SELECT
@@ -518,7 +480,7 @@ ORDER BY daily_units_sold DESC
 LIMIT 20;
 ```
 
-### Coverage theo ngay
+### Coverage theo ngày
 
 ```sql
 SELECT
@@ -529,51 +491,51 @@ GROUP BY 1
 ORDER BY 1;
 ```
 
-## 11. Van De Data Quality Can Biet
+## 11. Vấn Đề Data Quality Cần Biết
 
 ### 11.1. Miss Crawl Product
 
-Crawler co the khong lay du 100% product moi ngay vi:
+Crawler có thể không lấy đủ 100% product mỗi ngày vì:
 
 - Tiki API timeout.
-- Category pagination thay doi.
-- San pham bien mat khoi listing.
-- Request bi rate limit.
-- Category tree thay doi.
+- Category pagination thay đổi.
+- Sản phẩm biến mất khỏi listing.
+- Request bị rate limit.
+- Category tree thay đổi.
 
-Fact hien tai chi co san pham crawl duoc trong ngay. Neu product bi miss mot ngay, ngay do se khong co dong fact cho product do. Khi product xuat hien lai, delta co the bi don vao ngay xuat hien lai.
+Fact hiện tại chỉ có sản phẩm crawl được trong ngày. Nếu product bị miss một ngày, ngày đó sẽ không có dòng fact cho product đó. Khi product xuất hiện lại, delta có thể bị dồn vào ngày xuất hiện lại.
 
-Khuyen nghi nang cap:
+Khuyến nghị nâng cấp:
 
-- Tao `fact_product_daily` co grain `product_id x date`.
-- Them cot `is_observed`.
-- Them `last_seen_date`, `days_since_last_seen`.
-- Khong tinh daily delta khi snapshot truoc khong phai ngay lien truoc.
-- Them dashboard coverage rate.
+- Tạo `fact_product_daily` có grain `product_id x date`.
+- Thêm cột `is_observed`.
+- Thêm `last_seen_date`, `days_since_last_seen`.
+- Không tính daily delta khi snapshot trước không phải ngày liền trước.
+- Thêm dashboard coverage rate.
 
-### 11.2. Rerun Cung Ngay
+### 11.2. Rerun Cùng Ngày
 
-Fact hien dang duoc materialize incremental. Neu rerun cung ngay, can can than duplicate snapshot neu chien luoc append duoc dung. Nen uu tien chuyen fact sang merge hoac them logic idempotent theo `snapshot_id`.
+Fact hiện đang được materialize incremental. Nếu rerun cùng ngày, cần cẩn thận duplicate snapshot nếu chiến lược append được dùng. Nên ưu tiên chuyển fact sang merge hoặc thêm logic idempotent theo `snapshot_id`.
 
 ### 11.3. Timezone
 
-Pipeline da set timezone `Asia/Bangkok` cho Airflow va Trino. Crawler tao file theo ngay local cua container, nen viec set `TZ` giup ten file `products_yyyyMMdd.parquet` khop ngay business Vietnam hon.
+Pipeline đã set timezone `Asia/Bangkok` cho Airflow và Trino. Crawler tạo file theo ngày local của container, nên việc set `TZ` giúp tên file `products_yyyyMMdd.parquet` khớp ngày business Vietnam hơn.
 
-## 12. Loi Hay Gap
+## 12. Lỗi Hay Gặp
 
-### MinIO bi xoa file nhung Iceberg metadata con tro file cu
+### MinIO bị xóa file nhưng Iceberg metadata còn trỏ file cũ
 
-Xu ly:
+Xử lý:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/reset_lakehouse_metadata.ps1 -Force
 ```
 
-Sau do trigger lai DAG.
+Sau đó trigger lại DAG.
 
-### Airflow khong thay DAG
+### Airflow không thấy DAG
 
-Kiem tra:
+Kiểm tra:
 
 ```powershell
 docker exec tiki_airflow_scheduler airflow dags list
@@ -585,67 +547,67 @@ Restart Airflow:
 docker compose up -d airflow-webserver airflow-scheduler
 ```
 
-### Superset filter hien `<NULL>`
+### Superset filter hiện `<NULL>`
 
-Kiem tra dataset va native filter target. Voi Superset version hien tai, native filter nen dung:
+Kiểm tra dataset và native filter target. Với Superset version hiện tại, native filter nên dùng:
 
 ```text
 datasetId
 ```
 
-Sau khi sua dashboard metadata, thu:
+Sau khi sửa dashboard metadata, thử:
 
 ```text
 Ctrl + F5
 ```
 
-hoac logout/login lai Superset.
+hoặc logout/login lại Superset.
 
-### dbt staging khong doc dung raw file
+### dbt staging không đọc đúng raw file
 
-`stg_products.sql` doc raw file theo ngay hien tai:
+`stg_products.sql` đọc raw file theo ngày hiện tại:
 
 ```sql
 WHERE "$path" LIKE '%' || FORMAT_DATETIME(CURRENT_TIMESTAMP, 'yyyyMMdd') || '%'
 ```
 
-Vi vay raw file tren MinIO can co ten:
+Vì vậy raw file trên MinIO cần có tên:
 
 ```text
 products_yyyyMMdd.parquet
 ```
 
-## 13. Prompt Tao Anh Kien Truc Bang ChatGPT
+## 13. Prompt Tạo Ảnh Kiến Trúc Bằng ChatGPT
 
-Ban co the dua cac prompt sau cho ChatGPT hoac cong cu tao anh de tao minh hoa sinh dong cho README, slide hoac bao cao.
+Bạn có thể đưa các prompt sau cho ChatGPT hoặc công cụ tạo ảnh để tạo minh họa sinh động cho README, slide hoặc báo cáo.
 
-### Anh 1: Lakehouse Architecture
+### Ảnh 1: Lakehouse Architecture
 
 ```text
 Create a clean modern data engineering architecture diagram for a Tiki product analytics lakehouse. Show Tiki API on the left, Python Crawler, MinIO raw-data bucket storing Parquet files, Trino with Hive catalog reading raw Parquet, dbt transforming staging/dimensions/facts, Iceberg tables stored in MinIO lakehouse bucket with Postgres JDBC metadata, Airflow orchestrating crawler/dbt/dbt tests, and Superset dashboard on the right. Use a professional blue and green technical style, clear arrows, readable labels, no clutter, 16:9 aspect ratio.
 ```
 
-### Anh 2: Data Flow Story
+### Ảnh 2: Data Flow Story
 
 ```text
 Create an illustrated data flow for an ecommerce analytics pipeline. Step 1 crawl products from Tiki API, step 2 save daily Parquet snapshot to MinIO, step 3 query raw files via Trino Hive catalog, step 4 transform with dbt into staging dimensions and fact tables, step 5 store curated tables as Apache Iceberg, step 6 visualize revenue and sales metrics in Apache Superset. Use numbered steps, friendly but technical style, 16:9 aspect ratio, high readability.
 ```
 
-### Anh 3: Star Schema
+### Ảnh 3: Star Schema
 
 ```text
 Create a star schema diagram for Tiki product analytics. Put fact_product_snapshot in the center with columns snapshot_id, product_id, seller_id, brand_id, category_id, date_id, delivery_id, price, quantity_sold, estimated_sold_increment. Surround it with dim_product, dim_category, dim_brand, dim_seller, dim_date, dim_delivery. Use database table cards, primary and foreign key markers, clean white background, 16:9 aspect ratio.
 ```
 
-### Anh 4: Data Quality Coverage
+### Ảnh 4: Data Quality Coverage
 
 ```text
 Create a data quality dashboard illustration for a daily ecommerce crawler. Show observed products, expected product universe, coverage rate, missing products, and a warning that missing crawl data can distort daily revenue and sales. Include a small line chart showing coverage by day and a note: "Do not treat missing product as zero sales". Professional analytics style, 16:9 aspect ratio.
 ```
 
-## 14. Nen Commit Va Khong Nen Commit
+## 14. Nên Commit Và Không Nên Commit
 
-Nen commit:
+Nên commit:
 
 ```text
 .env.example
@@ -661,7 +623,7 @@ uv.lock
 superset_exports/
 ```
 
-Khong nen commit:
+Không nên commit:
 
 ```text
 .env
@@ -675,12 +637,12 @@ dbt/*.parquet
 tiki_lakehouse.egg-info/
 ```
 
-## 15. Huong Phat Trien Tiep
+## 15. Hướng Phát Triển Tiếp
 
-- Tao `fact_product_daily` de xu ly product bi miss crawl.
-- Them KPI coverage rate vao Superset.
-- Chuyen fact sang incremental merge de rerun idempotent.
-- Them crawl audit table theo category/page/status.
-- Build custom Airflow image de khong cai dependencies luc container start.
-- Tach credential khoi Trino catalog properties de tranh hard-code secret.
-- Them alert khi coverage thap hoac doanh thu giam bat thuong.
+- Tạo `fact_product_daily` để xử lý product bị miss crawl.
+- Thêm KPI coverage rate vào Superset.
+- Chuyển fact sang incremental merge để rerun idempotent.
+- Thêm crawl audit table theo category/page/status.
+- Build custom Airflow image để không cài dependencies lúc container start.
+- Tách credential khỏi Trino catalog properties để tránh hard-code secret.
+- Thêm alert khi coverage thấp hoặc doanh thu giảm bất thường.
